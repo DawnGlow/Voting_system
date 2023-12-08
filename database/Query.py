@@ -1,8 +1,8 @@
 import pymysql
 
 def POLL_CREATE(cursor):
-    query1 = "DROP TABLE IF EXISTS ITEM;"
-    cursor.execute(query1)
+    # query1 = "DROP TABLE IF EXISTS ITEM;"
+    # cursor.execute(query1)
     query2 = "DROP TABLE IF EXISTS POLL;"
     cursor.execute(query2)
     query = '''
@@ -10,9 +10,9 @@ def POLL_CREATE(cursor):
         POLL_ID int(11) NOT NULL AUTO_INCREMENT,
         START_DATE varchar(50) NOT NULL,
         END_DATE varchar(50),
-        ITEMCOUNT int(11),
+        ITEMCOUNT int(11) NOT NULL DEFAULT 0,
         QUESTION varchar(30),
-        POLLTOTAL int(11),
+        POLLTOTAL int(11) NOT NULL DEFAULT 0,
         REGDATE varchar(50),
         PRIMARY KEY(POLL_ID)
     ) AUTO_INCREMENT=1
@@ -24,8 +24,8 @@ def POLL_INSERT(cursor, START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, RE
     cursor.execute(query, (START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, REGDATE))
 
 def ACCOUNT_CREATE(cursor):
-    query1 = "DROP TABLE IF EXISTS ACCOUNT;"
-    cursor.execute(query1)
+    # query1 = "DROP TABLE IF EXISTS ACCOUNT;"
+    # cursor.execute(query1)
     query = '''
     CREATE TABLE ACCOUNT (
         ACCOUNT_ID int(11) NOT NULL AUTO_INCREMENT,
@@ -44,14 +44,14 @@ def ACCOUNT_INSERT(cursor, USERNAME, PASSWORD, IS_BANNED, SESSION_IP):
     
 
 def ITEM_CREATE(cursor):
-    query1 = "DROP TABLE IF EXISTS ITEM;"
-    cursor.execute(query1)
+    # query1 = "DROP TABLE IF EXISTS ITEM;"
+    # cursor.execute(query1)
     query = '''
     CREATE TABLE ITEM (
         ITEM_ID int(11) NOT NULL AUTO_INCREMENT,
         POLL_ID int(11) NOT NULL,
         ITEM_TEXT varchar(255) NOT NULL,
-        VOTE_COUNT int(11),
+        VOTE_COUNT int(11) NOT NULL DEFAULT 0,
         PRIMARY KEY (ITEM_ID, POLL_ID),
         FOREIGN KEY (POLL_ID) REFERENCES POLL(POLL_ID)
     ) AUTO_INCREMENT=1

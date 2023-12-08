@@ -2,6 +2,7 @@ import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QMainWindow, QFormLayout, QDialog, QDesktopWidget, QDateTimeEdit
 import pymysql
 from datetime import datetime
+from database import Query
 
 class CreatePollWindow(QDialog):
     def __init__(self, parent):
@@ -28,30 +29,40 @@ class CreatePollWindow(QDialog):
         self.setLayout(self.layout)
 
     def create_poll(self):
-        start_date = self.start_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
-        end_date = self.end_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
-        question = self.question_input.text()
+            start_date = self.start_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+            end_date = self.end_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+            question = self.question_input.text()
 
-        if start_date and end_date and question:
-            try:
-                with self.parent.connection.cursor() as cursor:
-                    # Get current date and time
-                    current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            if start_date and end_date and question:
+                try:
+                    with self.parent.connection.cursor() as cursor:
+                        # Get current date and time
+                        current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-                    # Insert poll into database
-                    poll_insert_query = "INSERT INTO POLL (START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, REGDATE) VALUES (%s, %s, %s, 0, 0, %s)"
-                    cursor.execute(poll_insert_query, (current_datetime, current_datetime, question, current_datetime))
+                        # Insert poll into database
+                        poll_insert_query = "INSERT INTO POLL (START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, REGDATE) VALUES (%s, %s, %s, 0, 0, %s)"
+                        cursor.execute(poll_insert_query, (current_datetime, current_datetime, question, current_datetime))
 
-                    # Commit the transaction
-                    self.parent.connection.commit()
-                    print(f"Poll created with question: '{question}'")
+                        # Get the poll_id of the inserted poll
+                        cursor.execute("SELECT LAST_INSERT_ID()")
+                        poll_id = cursor.fetchone()['LAST_INSERT_ID()']
 
-                    # Close the window after creating the poll
-                    self.close()
-            except pymysql.MySQLError as e:
-                print(f"Database error: {e}")
-        else:
-            print("Please enter start date, end date, and question.")
+                        # Insert items into ITEM table
+                        item_insert_query = "INSERT INTO ITEM (POLL_ID, ITEM_TEXT, VOTE_COUNT) VALUES (%s, %s, 0)"
+                        items = ['Item 1', 'Item 2', 'Item 3']  # You can customize the list of items
+                        item_data = [(poll_id, item) for item in items]
+                        cursor.executemany(item_insert_query, item_data)
+
+                        # Commit the transaction
+                        self.parent.connection.commit()
+                        print(f"Poll created with question: '{question}' and items: {items}")
+
+                        # Close the window after creating the poll
+                        self.close()
+                except pymysql.MySQLError as e:
+                    print(f"Database error: {e}")
+            else:
+                print("Please enter start date, end date, and question.")
 
 class ViewPollsWindow(QDialog):
     def __init__(self, parent):
@@ -357,12 +368,83 @@ class VotingSystem(QMainWindow):
             charset='utf8mb4',
             cursorclass=pymysql.cursors.DictCursor
         )
+        # Create tables if they don't exist
+        self.create_tables()
 
         # Current user ID (logged in user)
         self.user_id = None
 
         # Create UI
         self.init_ui()
+        
+    def create_tables(self):
+        try:
+            with self.connection.cursor() as cursor:
+                # Check if ACCOUNT table exists
+                cursor.execute("SHOW TABLES LIKE 'ACCOUNT'")
+                if not cursor.fetchone():
+                    # ACCOUNT table does not exist, create it
+                    self.create_account_table(cursor)
+
+                # Check if POLL table exists
+                cursor.execute("SHOW TABLES LIKE 'POLL'")
+                if not cursor.fetchone():
+                    # POLL table does not exist, create it
+                    self.create_poll_table(cursor)
+
+                # Check if ITEM table exists
+                cursor.execute("SHOW TABLES LIKE 'ITEM'")
+                if not cursor.fetchone():
+                    # ITEM table does not exist, create it
+                    self.create_item_table(cursor)
+
+                # Commit the transaction
+                self.connection.commit()
+
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+        
+    def create_item_table(self, cursor):
+        query = '''
+        CREATE TABLE ITEM (
+            ITEM_ID int(11) NOT NULL AUTO_INCREMENT,
+            POLL_ID int(11) NOT NULL,
+            ITEM_TEXT varchar(255) NOT NULL,
+            VOTE_COUNT int(11) NOT NULL DEFAULT 0,
+            PRIMARY KEY (ITEM_ID, POLL_ID),
+            FOREIGN KEY (POLL_ID) REFERENCES POLL(POLL_ID)
+        ) AUTO_INCREMENT=1
+        '''
+        cursor.execute(query)
+
+    def create_poll_table(self, cursor):
+        query = '''
+        CREATE TABLE POLL (
+            POLL_ID int(11) NOT NULL AUTO_INCREMENT,
+            START_DATE varchar(50) NOT NULL,
+            END_DATE varchar(50),
+            ITEMCOUNT int(11) NOT NULL DEFAULT 0,
+            QUESTION varchar(30),
+            POLLTOTAL int(11) NOT NULL DEFAULT 0,
+            REGDATE varchar(50),
+            PRIMARY KEY(POLL_ID)
+        ) AUTO_INCREMENT=1
+        '''
+        cursor.execute(query)
+
+    def create_account_table(self, cursor):
+        query = '''
+        CREATE TABLE ACCOUNT (
+            ACCOUNT_ID int(11) NOT NULL AUTO_INCREMENT,
+            USERNAME varchar(20) NOT NULL,
+            PASSWORD varchar(20) NOT NULL,
+            IS_BANNED tinyint(1) NOT NULL DEFAULT '0',
+            SESSION_IP varchar(20),
+            PRIMARY KEY(ACCOUNT_ID)
+        ) AUTO_INCREMENT=1
+        '''
+        cursor.execute(query)
+
 
     def init_ui(self):
         self.setWindowTitle('Voting System')
