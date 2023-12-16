@@ -1,8 +1,102 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QMainWindow, QFormLayout, QDialog, QDesktopWidget, QDateTimeEdit
+from PyQt5.QtWidgets import QApplication, QWidget, QListWidget, QMessageBox, QVBoxLayout, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QMainWindow, QFormLayout, QDialog, QDesktopWidget, QDateTimeEdit
+from PyQt5.QtCore import Qt
 import pymysql
 from datetime import datetime
 from database import Query
+
+class ManagePollItemsWindow(QDialog):
+    def __init__(self, parent, poll_id):
+        super().__init__()
+        self.parent = parent
+        self.poll_id = poll_id
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Manage Poll Items')
+        self.layout = QVBoxLayout()
+
+        # List of poll items
+        self.items_list = QListWidget(self)
+        self.load_items()
+        self.layout.addWidget(self.items_list)
+
+        # Input for adding or editing items
+        self.item_input = QLineEdit(self)
+        self.layout.addWidget(self.item_input)
+
+        # Buttons for adding, editing, and deleting items
+        self.add_item_button = QPushButton('Add Item', self)
+        self.add_item_button.clicked.connect(self.add_item)
+        self.edit_item_button = QPushButton('Edit Selected Item', self)
+        self.edit_item_button.clicked.connect(self.edit_item)
+        self.delete_item_button = QPushButton('Delete Selected Item', self)
+        self.delete_item_button.clicked.connect(self.delete_item)
+        self.layout.addWidget(self.add_item_button)
+        self.layout.addWidget(self.edit_item_button)
+        self.layout.addWidget(self.delete_item_button)
+
+        self.setLayout(self.layout)
+
+    def load_items(self):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT ITEM_ID, ITEM_TEXT FROM ITEM WHERE POLL_ID = %s", (self.poll_id,))
+                for item in cursor.fetchall():
+                    self.items_list.addItem(f"{item['ITEM_TEXT']}")
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+    
+    def add_item(self):
+        item_text = self.item_input.text()
+        if item_text:
+            try:
+                with self.parent.connection.cursor() as cursor:
+                    # Insert new item into the ITEM table
+                    insert_query = "INSERT INTO ITEM (POLL_ID, ITEM_TEXT, VOTE_COUNT) VALUES (%s, %s, 0)"
+                    cursor.execute(insert_query, (self.poll_id, item_text))
+                    self.parent.connection.commit()
+                    print(f"Item '{item_text}' added to poll ID {self.poll_id}")
+
+                    # Update UI
+                    self.items_list.addItem(item_text)
+                    self.item_input.clear()
+            except pymysql.MySQLError as e:
+                print(f"Database error: {e}")
+
+    def edit_item(self):
+        selected_item = self.items_list.currentItem()
+        if selected_item:
+            new_text = self.item_input.text()
+            if new_text:
+                try:
+                    with self.parent.connection.cursor() as cursor:
+                        # Update the selected item
+                        update_query = "UPDATE ITEM SET ITEM_TEXT = %s WHERE ITEM_ID = %s AND POLL_ID = %s"
+                        cursor.execute(update_query, (new_text, selected_item.data(Qt.UserRole), self.poll_id))
+                        self.parent.connection.commit()
+                        print(f"Item ID {selected_item.data(Qt.UserRole)} updated in poll ID {self.poll_id}")
+
+                        # Update UI
+                        selected_item.setText(new_text)
+                except pymysql.MySQLError as e:
+                    print(f"Database error: {e}")
+
+    def delete_item(self):
+        selected_item = self.items_list.currentItem()
+        if selected_item:
+            try:
+                with self.parent.connection.cursor() as cursor:
+                    # Delete the selected item
+                    delete_query = "DELETE FROM ITEM WHERE ITEM_ID = %s AND POLL_ID = %s"
+                    cursor.execute(delete_query, (selected_item.data(Qt.UserRole), self.poll_id))
+                    self.parent.connection.commit()
+                    print(f"Item ID {selected_item.data(Qt.UserRole)} deleted from poll ID {self.poll_id}")
+
+                    # Update UI
+                    self.items_list.takeItem(self.items_list.row(selected_item))
+            except pymysql.MySQLError as e:
+                print(f"Database error: {e}")
 
 class CreatePollWindow(QDialog):
     def __init__(self, parent):
@@ -36,20 +130,22 @@ class CreatePollWindow(QDialog):
         if start_date and end_date and question:
             try:
                 with self.parent.connection.cursor() as cursor:
-                    # Insert poll into database with user-specified start and end dates
-                    poll_insert_query = "INSERT INTO POLL (START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, REGDATE) VALUES (%s, %s, %s, 0, 0, %s)"
-                    cursor.execute(poll_insert_query, (start_date, end_date, question, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                    poll_insert_query = """
+                    INSERT INTO POLL (START_DATE, END_DATE, QUESTION, ITEMCOUNT, POLLTOTAL, REGDATE, CREATED_BY) 
+                    VALUES (%s, %s, %s, 0, 0, %s, %s)
+                    """
+                    cursor.execute(poll_insert_query, (start_date, end_date, question, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.parent.user_id))
+                    self.parent.connection.commit()
 
-                    # Get the poll_id of the inserted poll
+                    # Get the ID of the created poll
                     cursor.execute("SELECT LAST_INSERT_ID()")
                     poll_id = cursor.fetchone()['LAST_INSERT_ID()']
 
-                    # Close the current window
-                    self.close()
-
-                    # Open a new window to add poll items
+                    # Open the AddPollItemsWindow
                     add_items_window = AddPollItemsWindow(self.parent, poll_id)
                     add_items_window.exec_()
+
+                    print(f"Poll created with question: '{question}'")
 
             except pymysql.MySQLError as e:
                 print(f"Database error: {e}")
@@ -154,7 +250,7 @@ class ViewPollsWindow(QDialog):
                 vote_item_window.exec_()
         except pymysql.MySQLError as e:
             print(f"Database error: {e}")
-
+'''
 class VotePollWindow(QDialog):
     def __init__(self, parent, items, poll_id):
         super().__init__()
@@ -179,15 +275,20 @@ class VotePollWindow(QDialog):
         self.setLayout(self.layout)
 
     def vote_for_item(self, item_id):
+        # Check if the user has already voted in this poll
+        if self.has_user_voted(self.poll_id):
+            print("You have already voted in this poll.")
+            return
+
         try:
             with self.parent.connection.cursor() as cursor:
                 # Update vote count for the specified item
                 update_vote_query = "UPDATE ITEM SET VOTE_COUNT = VOTE_COUNT + 1 WHERE ITEM_ID = %s"
                 cursor.execute(update_vote_query, (item_id,))
 
-                # Update total vote count for the poll
-                update_poll_total_query = "UPDATE POLL SET POLLTOTAL = POLLTOTAL + 1 WHERE POLL_ID = %s"
-                cursor.execute(update_poll_total_query, (self.poll_id,))
+                # Record the user's vote in USER_VOTE table
+                record_user_vote_query = "INSERT INTO USER_VOTE (POLL_ID, USER_ID) VALUES (%s, %s)"
+                cursor.execute(record_user_vote_query, (self.poll_id, self.parent.user_id))
 
                 # Commit the transaction
                 self.parent.connection.commit()
@@ -199,11 +300,17 @@ class VotePollWindow(QDialog):
         except pymysql.MySQLError as e:
             print(f"Database error: {e}")
 
-    def refresh_items(self):
-        # Close the current window and reopen it with updated data
-        self.close()
-        view_poll_window = VotePollWindow(self.parent, self.items, self.poll_id)
-        view_poll_window.exec_()
+    def has_user_voted(self, poll_id):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                vote_check_query = "SELECT COUNT(*) FROM USER_VOTE WHERE POLL_ID = %s AND USER_ID = %s"
+                cursor.execute(vote_check_query, (poll_id, self.parent.user_id))
+                result = cursor.fetchone()
+                return result['COUNT(*)'] > 0
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+            return False
+'''
         
 
 class VoteItemWindow(QDialog):
@@ -212,82 +319,86 @@ class VoteItemWindow(QDialog):
         self.parent = parent
         self.items = items
         self.poll_id = poll_id
-        self.poll_end_date = None
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('Poll Items')
+        self.setWindowTitle('Vote Poll')
         self.layout = QVBoxLayout()
 
-        current_datetime = datetime.now()
+        for item in self.items:
+            item_id = item['ITEM_ID']
+            item_text = item['ITEM_TEXT']
+            vote_count = item['VOTE_COUNT']
+
+            item_button = QPushButton(f"Item ID: {item_id}, Item Text: {item_text}, Vote Count: {vote_count}", self)
+            item_button.clicked.connect(lambda _, iid=item_id: self.vote_for_item(iid))
+            self.layout.addWidget(item_button)
+
+        self.setLayout(self.layout)
+
+    def vote_for_item(self, item_id):
+        # Check if the user has already voted in this poll
+        if self.has_user_voted(self.poll_id):
+            QMessageBox.information(self, "Already Voted", "You have already voted in this poll.")
+            return
 
         try:
             with self.parent.connection.cursor() as cursor:
-                # Retrieve the poll information
-                poll_query = "SELECT * FROM POLL WHERE POLL_ID = %s"
-                cursor.execute(poll_query, (self.poll_id,))
-                poll = cursor.fetchone()
+                # Update vote count for the specified item
+                update_vote_query = "UPDATE ITEM SET VOTE_COUNT = VOTE_COUNT + 1 WHERE ITEM_ID = %s"
+                cursor.execute(update_vote_query, (item_id,))
 
-                reg_date = poll['REGDATE']
-                start_date = poll['START_DATE']
-                end_date = poll['END_DATE']
-                self.poll_end_date = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
+                # Record the user's vote in USER_VOTE table
+                record_user_vote_query = "INSERT INTO USER_VOTE (POLL_ID, USER_ID) VALUES (%s, %s)"
+                cursor.execute(record_user_vote_query, (self.poll_id, self.parent.user_id))
 
-                # Display poll dates at the top
-                poll_dates_label = QLabel(f"Registration Date: {reg_date}, Start Date: {start_date}, End Date: {end_date}")
-                self.layout.addWidget(poll_dates_label)
+                # Commit the transaction
+                self.parent.connection.commit()
+                print(f"Vote recorded for Item ID: {item_id}")
+
+                # Refresh the items in the current window
+                self.refresh_items()
+
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+
+    def has_user_voted(self, poll_id):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                vote_check_query = "SELECT COUNT(*) FROM USER_VOTE WHERE POLL_ID = %s AND USER_ID = %s"
+                cursor.execute(vote_check_query, (poll_id, self.parent.user_id))
+                result = cursor.fetchone()
+                return result['COUNT(*)'] > 0
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+            return False
+        
+    def refresh_items(self):
+        # 현재 표시된 항목들을 제거합니다.
+        for i in reversed(range(self.layout.count())): 
+            widgetToRemove = self.layout.itemAt(i).widget()
+            # 위젯이 있으면 제거합니다.
+            if widgetToRemove is not None:
+                widgetToRemove.setParent(None)
+
+        # 최신 투표 항목 데이터를 불러옵니다.
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM ITEM WHERE POLL_ID = %s", (self.poll_id,))
+                self.items = cursor.fetchall()
 
                 for item in self.items:
                     item_id = item['ITEM_ID']
                     item_text = item['ITEM_TEXT']
                     vote_count = item['VOTE_COUNT']
 
-                    item_label = QLabel(f"Item ID: {item_id}, Item Text: {item_text}, Vote Count: {vote_count}")
-                    self.layout.addWidget(item_label)
-
-                # Enable voting only if the poll is still active
-                if current_datetime < self.poll_end_date:
-                    self.item_id_input = QLineEdit(self)
-                    self.layout.addWidget(self.item_id_input)
-
-                    self.vote_button = QPushButton('Vote', self)
-                    self.vote_button.clicked.connect(self.vote_for_item)
-                    self.layout.addWidget(self.vote_button)
-                else:
-                    self.layout.addWidget(QLabel("Voting has ended for this poll."))
+                    # 갱신된 정보로 버튼을 다시 만듭니다.
+                    item_button = QPushButton(f"Item ID: {item_id}, Item Text: {item_text}, Vote Count: {vote_count}", self)
+                    item_button.clicked.connect(lambda _, iid=item_id: self.vote_for_item(iid))
+                    self.layout.addWidget(item_button)
 
         except pymysql.MySQLError as e:
             print(f"Database error: {e}")
-
-        self.setLayout(self.layout)
-
-
-    def vote_for_item(self):
-        item_id = self.item_id_input.text()
-
-        if item_id:
-            try:
-                with self.parent.connection.cursor() as cursor:
-                    # Update vote count for the specified item
-                    update_vote_query = "UPDATE ITEM SET VOTE_COUNT = VOTE_COUNT + 1 WHERE ITEM_ID = %s"
-                    cursor.execute(update_vote_query, (item_id,))
-
-                    # Update total vote count for the poll
-                    update_poll_total_query = "UPDATE POLL SET POLLTOTAL = POLLTOTAL + 1 WHERE POLL_ID = %s"
-                    cursor.execute(update_poll_total_query, (self.poll_id,))
-
-                    # Commit the transaction
-                    self.parent.connection.commit()
-                    print(f"Vote recorded for Item ID: {item_id}")
-
-                    # Close the window after voting
-                    self.close()
-
-            except pymysql.MySQLError as e:
-                print(f"Database error: {e}")
-
-        else:
-            print("Please enter Item ID.")
 
 
 class LoginScreen(QWidget):
@@ -358,7 +469,144 @@ class VotePollWindow(QDialog):
                 vote_item_window.exec_()
         except pymysql.MySQLError as e:
             print(f"Database error: {e}")
+            
+    
 
+class DeletePollWindow(QDialog):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Delete Poll')
+        self.layout = QVBoxLayout()
+
+        self.poll_combo_box = QComboBox(self)
+        self.load_polls()
+        self.layout.addWidget(self.poll_combo_box)
+
+        self.delete_button = QPushButton('Delete Poll', self)
+        self.delete_button.clicked.connect(self.delete_poll)
+        self.layout.addWidget(self.delete_button)
+
+        self.setLayout(self.layout)
+
+    def load_polls(self):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT POLL_ID, QUESTION FROM POLL")
+                for poll in cursor.fetchall():
+                    self.poll_combo_box.addItem(f"{poll['QUESTION']}", poll['POLL_ID'])
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+
+    def delete_poll(self):
+        poll_id = self.poll_combo_box.currentData()
+        if self.can_modify_or_delete(poll_id):
+            try:
+                with self.parent.connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM ITEM WHERE POLL_ID = %s", (poll_id,))
+                    cursor.execute("DELETE FROM POLL WHERE POLL_ID = %s", (poll_id,))
+                    self.parent.connection.commit()
+                    print(f"Poll ID {poll_id} deleted successfully")
+                    self.poll_combo_box.removeItem(self.poll_combo_box.currentIndex())
+            except pymysql.MySQLError as e:
+                print(f"Database error: {e}")
+        else:
+            print("You do not have permission to delete this poll.")
+
+    def can_modify_or_delete(self, poll_id):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT CREATED_BY FROM POLL WHERE POLL_ID = %s", (poll_id,))
+                poll = cursor.fetchone()
+                return self.parent.user_is_admin or (poll and poll['CREATED_BY'] == self.parent.user_id)
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+            return False
+        
+
+class ModifyPollWindow(QDialog):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Modify Poll')
+        self.layout = QVBoxLayout(self)
+
+        form_layout = QFormLayout()
+
+        self.poll_combo_box = QComboBox(self)
+        self.load_polls()
+        form_layout.addRow('Select Poll:', self.poll_combo_box)
+
+        self.start_date_input = QDateTimeEdit(self)
+        self.end_date_input = QDateTimeEdit(self)
+        self.question_input = QLineEdit(self)
+
+        form_layout.addRow('Start Date:', self.start_date_input)
+        form_layout.addRow('End Date:', self.end_date_input)
+        form_layout.addRow('Question:', self.question_input)
+
+        self.layout.addLayout(form_layout)
+
+        self.save_changes_button = QPushButton('Save Changes', self)
+        self.save_changes_button.clicked.connect(self.save_changes)
+        self.manage_items_button = QPushButton('Manage Items', self)
+        self.manage_items_button.clicked.connect(self.manage_items)
+        
+        self.layout.addWidget(self.save_changes_button)
+        self.layout.addWidget(self.manage_items_button)
+
+        self.setLayout(self.layout)
+
+    def load_polls(self):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT POLL_ID, QUESTION FROM POLL")
+                for poll in cursor.fetchall():
+                    self.poll_combo_box.addItem(f"{poll['QUESTION']}", poll['POLL_ID'])
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+
+    def save_changes(self):
+        poll_id = self.poll_combo_box.currentData()
+        start_date = self.start_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        end_date = self.end_date_input.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        question = self.question_input.text()
+
+        if self.can_modify_or_delete(poll_id):
+            try:
+                with self.parent.connection.cursor() as cursor:
+                    update_query = "UPDATE POLL SET START_DATE = %s, END_DATE = %s, QUESTION = %s WHERE POLL_ID = %s"
+                    cursor.execute(update_query, (start_date, end_date, question, poll_id))
+                    self.parent.connection.commit()
+                    print(f"Poll ID {poll_id} updated successfully")
+            except pymysql.MySQLError as e:
+                print(f"Database error: {e}")
+        else:
+            print("You do not have permission to modify this poll.")
+
+    def manage_items(self):
+        poll_id = self.poll_combo_box.currentData()
+        if self.can_modify_or_delete(poll_id):
+            manage_items_window = ManagePollItemsWindow(self.parent, poll_id)
+            manage_items_window.exec_()
+        else:
+            print("You do not have permission to manage items for this poll.")
+
+    def can_modify_or_delete(self, poll_id):
+        try:
+            with self.parent.connection.cursor() as cursor:
+                cursor.execute("SELECT CREATED_BY FROM POLL WHERE POLL_ID = %s", (poll_id,))
+                poll = cursor.fetchone()
+                return self.parent.user_is_admin or (poll and poll['CREATED_BY'] == self.parent.user_id)
+        except pymysql.MySQLError as e:
+            print(f"Database error: {e}")
+            return False
 
 class MainMenu(QWidget):
     def __init__(self, parent):
@@ -382,6 +630,15 @@ class MainMenu(QWidget):
         self.quit_button = QPushButton('Quit', self)
         self.quit_button.clicked.connect(self.quit_program)
         self.layout.addWidget(self.quit_button)
+        
+        self.modify_poll_button = QPushButton('Modify Poll', self)
+        self.modify_poll_button.clicked.connect(self.show_modify_poll)
+        self.layout.addWidget(self.modify_poll_button)
+
+        self.delete_poll_button = QPushButton('Delete Poll', self)
+        self.delete_poll_button.clicked.connect(self.show_delete_poll)
+        self.layout.addWidget(self.delete_poll_button)
+
 
         self.setLayout(self.layout)
 
@@ -392,6 +649,14 @@ class MainMenu(QWidget):
     def show_view_polls(self):
         view_polls_window = ViewPollsWindow(self.parent)
         view_polls_window.exec_()
+
+    def show_modify_poll(self):
+        modify_poll_window = ModifyPollWindow(self.parent)
+        modify_poll_window.exec_()
+
+    def show_delete_poll(self):
+        delete_poll_window = DeletePollWindow(self.parent)
+        delete_poll_window.exec_()
 
     # 변경: Vote 버튼 클릭 시 프로그램 종료
     def quit_program(self):
@@ -451,6 +716,9 @@ class VotingSystem(QMainWindow):
         # Create UI
         self.init_ui()
         
+        # Initialize user admin status
+        self.user_is_admin = False
+        
     def create_tables(self):
         try:
             with self.connection.cursor() as cursor:
@@ -471,12 +739,31 @@ class VotingSystem(QMainWindow):
                 if not cursor.fetchone():
                     # ITEM table does not exist, create it
                     self.create_item_table(cursor)
+                    
+                # ... existing code ...
+                cursor.execute("SHOW TABLES LIKE 'USER_VOTE'")
+                if not cursor.fetchone():
+                    self.create_user_vote_table(cursor)
+                # Commit the transaction
 
                 # Commit the transaction
                 self.connection.commit()
 
         except pymysql.MySQLError as e:
             print(f"Database error: {e}")
+            
+    def create_user_vote_table(self, cursor):
+        query = '''
+        CREATE TABLE USER_VOTE (
+            VOTE_ID int(11) NOT NULL AUTO_INCREMENT,
+            POLL_ID int(11) NOT NULL,
+            USER_ID int(11) NOT NULL,
+            PRIMARY KEY (VOTE_ID),
+            FOREIGN KEY (POLL_ID) REFERENCES POLL(POLL_ID),
+            FOREIGN KEY (USER_ID) REFERENCES ACCOUNT(ACCOUNT_ID)
+        ) AUTO_INCREMENT=1
+        '''
+        cursor.execute(query)
         
     def create_item_table(self, cursor):
         query = '''
@@ -501,7 +788,9 @@ class VotingSystem(QMainWindow):
             QUESTION varchar(30),
             POLLTOTAL int(11) NOT NULL DEFAULT 0,
             REGDATE varchar(50),
-            PRIMARY KEY(POLL_ID)
+            CREATED_BY int(11),  # Adding the CREATED_BY column
+            PRIMARY KEY(POLL_ID),
+            FOREIGN KEY (CREATED_BY) REFERENCES ACCOUNT(ACCOUNT_ID)  # Setting up a foreign key reference
         ) AUTO_INCREMENT=1
         '''
         cursor.execute(query)
@@ -565,6 +854,7 @@ class VotingSystem(QMainWindow):
                         # User exists, check the password
                         if existing_user['PASSWORD'] == password:
                             self.user_id = existing_user['ACCOUNT_ID']
+                            self.user_is_admin = existing_user['IS_ADMIN'] == 1  # Set user admin status
                             print(f"Login successful for user '{username}'")
 
                             # Remove the login screen and show the main menu
