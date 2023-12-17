@@ -4,6 +4,7 @@ from PyQt5.QtCore import Qt
 import pymysql
 from datetime import datetime
 from database import Query
+import logging
 
 class ManagePollItemsWindow(QDialog):
     def __init__(self, parent, poll_id):
@@ -15,7 +16,7 @@ class ManagePollItemsWindow(QDialog):
     def init_ui(self):
         self.setWindowTitle('Manage Poll Items')
         self.layout = QVBoxLayout()
-
+        
         # List of poll items
         self.items_list = QListWidget(self)
         self.load_items()
@@ -210,7 +211,7 @@ class ViewPollsWindow(QDialog):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('View Polls')
+        self.setWindowTitle('View Polls and Vote')
         self.layout = QVBoxLayout()
 
         current_datetime = datetime.now()
@@ -408,7 +409,7 @@ class LoginScreen(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('Login')
+        self.setWindowTitle('Seoultech Voting System Login')
         self.layout = QVBoxLayout()
 
         self.login_label = QLabel('Login:')
@@ -622,7 +623,7 @@ class MainMenu(QWidget):
         self.create_poll_button.clicked.connect(self.show_create_poll)
         self.layout.addWidget(self.create_poll_button)
 
-        self.view_polls_button = QPushButton('View Polls', self)
+        self.view_polls_button = QPushButton('View Polls and Vote', self)
         self.view_polls_button.clicked.connect(self.show_view_polls)
         self.layout.addWidget(self.view_polls_button)
 
@@ -697,6 +698,10 @@ class AdditionalFields(QWidget):
 class VotingSystem(QMainWindow):
     def __init__(self):
         super().__init__()
+        
+        # 로깅 설정
+        logging.basicConfig(filename='log.txt', level=logging.INFO, 
+                            format='%(asctime)s:%(levelname)s:%(message)s')
 
         # Initialize database connection
         self.connection = pymysql.connect(
@@ -811,7 +816,7 @@ class VotingSystem(QMainWindow):
 
 
     def init_ui(self):
-        self.setWindowTitle('Voting System')
+        self.setWindowTitle('Seoultech Voting System')
 
         # Create instances of different screens
         self.login_screen = LoginScreen(self)
@@ -864,10 +869,17 @@ class VotingSystem(QMainWindow):
 
                             # Show login result on the login screen
                             self.login_screen.show_login_result(True)
+                            
+                            logging.info(f"Login successful for user '{username}'")
+                            if existing_user['IS_ADMIN'] == 1:
+                                logging.info(f"Admin login successful for user '{username}'")
+                            else:
+                                logging.info(f"User login successful for user '{username}'")
                         else:
                             print(f"Login failed for user '{username}': Incorrect password")
                             # Show login result on the login screen
                             self.login_screen.show_login_result(False)
+                            logging.info(f"Login failed for user '{username}': Incorrect password")
                             
                         if existing_user['IS_ADMIN'] == 1:
                             print(f"Admin login successful for user '{username}'")
@@ -893,6 +905,8 @@ class VotingSystem(QMainWindow):
 
                         # Show login result on the login screen
                         self.login_screen.show_login_result(True)
+                        
+                        logging.info(f"New account created and logged in for user '{username}'")
 
             except pymysql.MySQLError as e:
                 print(f"Database error: {e}")
@@ -941,8 +955,12 @@ class VotingSystem(QMainWindow):
                         # Commit the transaction
                         self.connection.commit()
                         print(f"Vote recorded for '{item_text}' in poll '{item_text}'")
+                        
+                        logging.info(f"Vote recorded for '{item_text}' in poll '{item_text}'")
                     else:
                         print(f"Poll '{item_text}' not found.")
+                        logging.info(f"Poll '{item_text}' not found.")
+
             except pymysql.MySQLError as e:
                 print(f"Database error: {e}")
         else:
